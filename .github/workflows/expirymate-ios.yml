@@ -1,0 +1,48 @@
+name: ExpiryMate iOS build
+
+# Builds the ExpiryMate iPhone app and publishes an unsigned .ipa that can be
+# installed from a PC with a sideloading tool such as Sideloadly.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios-expiry-app/**'
+      - '.github/workflows/expirymate-ios.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build (unsigned)
+        working-directory: ios-expiry-app
+        run: |
+          xcodebuild -version
+          xcodebuild build \
+            -project ExpiryMate.xcodeproj \
+            -scheme ExpiryMate \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package .ipa
+        working-directory: ios-expiry-app
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/ExpiryMate.app Payload/
+          zip -qry ExpiryMate.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ExpiryMate-unsigned-ipa
+          path: ios-expiry-app/ExpiryMate.ipa
+          if-no-files-found: error
