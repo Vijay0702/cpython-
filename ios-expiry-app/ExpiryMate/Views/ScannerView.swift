@@ -1,5 +1,19 @@
+import AVFoundation
 import SwiftUI
 import VisionKit
+
+/// The phone's flashlight, for reading dates on dark or shiny packaging.
+enum Torch {
+    static func set(_ on: Bool) {
+        guard
+            let device = AVCaptureDevice.default(for: .video),
+            device.hasTorch,
+            (try? device.lockForConfiguration()) != nil
+        else { return }
+        device.torchMode = on ? .on : .off
+        device.unlockForConfiguration()
+    }
+}
 
 /// Live camera scanner for either barcodes or printed text.
 struct ScannerView: UIViewControllerRepresentable {
@@ -27,7 +41,8 @@ struct ScannerView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(
             recognizedDataTypes: mode == .barcode ? [.barcode()] : [.text()],
-            qualityLevel: .balanced,
+            // Small printed dates need the slower, sharper mode; barcodes do not.
+            qualityLevel: mode == .text ? .accurate : .balanced,
             recognizesMultipleItems: mode == .text,
             isHighFrameRateTrackingEnabled: false,
             isHighlightingEnabled: true

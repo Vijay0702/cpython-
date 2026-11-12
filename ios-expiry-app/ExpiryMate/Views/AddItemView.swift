@@ -22,6 +22,7 @@ struct AddItemView: View {
     @State private var expiryDate = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var detectedDate: Date?
     @State private var isLookingUp = false
+    @State private var torchOn = false
 
     var body: some View {
         NavigationStack {
@@ -40,6 +41,12 @@ struct AddItemView: View {
                     Button("Cancel") { dismiss() }
                 }
             }
+            .onChange(of: step) {
+                // Each step starts its own camera session, so start with the light off.
+                torchOn = false
+                Torch.set(false)
+            }
+            .onDisappear { Torch.set(false) }
             .task {
                 // The scanner reports itself unavailable until camera access has
                 // been granted, so ask first and fall back to typing if refused.
@@ -66,6 +73,7 @@ struct AddItemView: View {
     private var barcodeStep: some View {
         ScannerView(mode: .barcode, onBarcode: handleBarcode)
             .ignoresSafeArea(edges: .bottom)
+            .overlay(alignment: .topTrailing) { torchButton }
             .overlay(alignment: .bottom) {
                 VStack(spacing: 12) {
                     if isLookingUp {
@@ -96,11 +104,26 @@ struct AddItemView: View {
         }
     }
 
+    private var torchButton: some View {
+        Button {
+            torchOn.toggle()
+            Torch.set(torchOn)
+        } label: {
+            Image(systemName: torchOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                .font(.title2)
+                .frame(width: 52, height: 52)
+                .background(.regularMaterial, in: Circle())
+        }
+        .accessibilityLabel(torchOn ? "Turn light off" : "Turn light on")
+        .padding()
+    }
+
     // MARK: - Step 2: expiry date
 
     private var dateStep: some View {
         ScannerView(mode: .text, onText: handleText)
             .ignoresSafeArea(edges: .bottom)
+            .overlay(alignment: .topTrailing) { torchButton }
             .overlay(alignment: .bottom) {
                 VStack(spacing: 12) {
                     if !name.isEmpty {
@@ -141,6 +164,14 @@ struct AddItemView: View {
             }
             Section("Expiry") {
                 DatePicker("Expires on", selection: $expiryDate, displayedComponents: .date)
+                HStack {
+                    quickDate("3 days", .day, 3)
+                    quickDate("1 week", .day, 7)
+                    quickDate("2 weeks", .day, 14)
+                    quickDate("1 month", .month, 1)
+                }
+                .buttonStyle(.bordered)
+                .font(.subheadline)
             }
             if cameraUsable {
                 Section {
@@ -158,6 +189,14 @@ struct AddItemView: View {
                     .disabled(trimmedName.isEmpty)
             }
         }
+    }
+
+    /// One-tap expiry for when the printed date cannot be scanned.
+    private func quickDate(_ label: String, _ unit: Calendar.Component, _ amount: Int) -> some View {
+        Button(label) {
+            expiryDate = Calendar.current.date(byAdding: unit, value: amount, to: Date()) ?? expiryDate
+        }
+        .lineLimit(1)
     }
 
     private var trimmedName: String {
