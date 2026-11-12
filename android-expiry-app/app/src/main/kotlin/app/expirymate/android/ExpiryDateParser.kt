@@ -21,8 +21,7 @@ object ExpiryDateParser {
         dayFirst: Boolean = localeIsDayFirst(),
     ): LocalDate? {
         val upper = text.uppercase(Locale.ROOT)
-        var best: LocalDate? = null
-        var bestScore = Int.MIN_VALUE
+        val candidates = mutableListOf<Candidate>()
 
         for (pattern in patterns) {
             for (match in pattern.regex.findAll(upper)) {
@@ -31,16 +30,20 @@ object ExpiryDateParser {
                 val date = makeDate(parts) ?: continue
 
                 val context = upper.substring(maxOf(0, match.range.first - 24), match.range.first)
-                val score = score(context)
-                val current = best
-                if (current == null || score > bestScore || (score == bestScore && date.isAfter(current))) {
-                    best = date
-                    bestScore = score
-                }
+                candidates += Candidate(date, score(context), match.range, parts.day != null)
             }
         }
-        return best
+
+        // "12 01 2027" also contains "01 2027". Where a month-only reading overlaps
+        // a full date, the full date is the right one.
+        val fullDates = candidates.filter { it.hasDay }
+        return candidates
+            .filter { c -> c.hasDay || fullDates.none { it.range.first <= c.range.last && c.range.first <= it.range.last } }
+            .maxWithOrNull(compareBy<Candidate> { it.score }.thenBy { it.date })
+            ?.date
     }
+
+    private class Candidate(val date: LocalDate, val score: Int, val range: IntRange, val hasDay: Boolean)
 
     /** True when the user's region writes the day before the month. */
     fun localeIsDayFirst(): Boolean {
@@ -87,6 +90,10 @@ object ExpiryDateParser {
         // 01/2027, 01-27 (no day: valid to the end of the month)
         Pattern("(?<![0-9A-Z./-])(\\d{1,2})[./-](\\d{4}|\\d{2})(?![0-9./-])") { g, _ ->
             Parts(fullYear(g[1].toInt()), g[0].toInt(), null)
+        },
+        // 11 2027 (month and four-digit year separated only by a space)
+        Pattern("$LEAD(0?[1-9]|1[0-2])\\s+(20\\d{2})$TRAIL") { g, _ ->
+            Parts(g[1].toInt(), g[0].toInt(), null)
         },
         // 12 JAN 2027, 12-JAN-27, 12JAN2027
         Pattern("$LEAD(\\d{1,2})$SEP?($MONTHS)$SEP?(\\d{4}|\\d{2})$TRAIL") { g, _ ->

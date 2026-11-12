@@ -16,7 +16,7 @@ enum ExpiryDateParser {
     ) -> Date? {
         let upper = text.uppercased()
         let thisYear = calendar.component(.year, from: now)
-        var candidates: [(date: Date, score: Int)] = []
+        var candidates: [(date: Date, score: Int, range: NSRange, hasDay: Bool)] = []
 
         for pattern in patterns {
             let range = NSRange(upper.startIndex..., in: upper)
@@ -36,8 +36,15 @@ enum ExpiryDateParser {
                 else { continue }
 
                 let context = preceding(upper, match.range, length: 24)
-                candidates.append((date, score(for: context)))
+                candidates.append((date, score(for: context), match.range, parts.day != nil))
             }
+        }
+
+        // "12 01 2027" also contains "01 2027". Where a month-only reading overlaps
+        // a full date, the full date is the right one.
+        let fullDates = candidates.filter { $0.hasDay }
+        candidates.removeAll { candidate in
+            !candidate.hasDay && fullDates.contains { NSIntersectionRange($0.range, candidate.range).length > 0 }
         }
 
         return candidates.max { a, b in
@@ -101,6 +108,11 @@ enum ExpiryDateParser {
         Pattern("(?<![0-9A-Z./-])(\\d{1,2})[./-](\\d{4}|\\d{2})(?![0-9./-])") { g, _ in
             guard let m = Int(g[0]), let y = Int(g[1]) else { return nil }
             return Parts(year: fullYear(y), month: m, day: nil)
+        },
+        // 11 2027 (month and four-digit year separated only by a space)
+        Pattern("\(lead)(0?[1-9]|1[0-2])\\s+(20\\d{2})\(trail)") { g, _ in
+            guard let m = Int(g[0]), let y = Int(g[1]) else { return nil }
+            return Parts(year: y, month: m, day: nil)
         },
         // 12 JAN 2027, 12-JAN-27, 12JAN2027
         Pattern("\(lead)(\\d{1,2})\(sep)?(\(monthNames))\(sep)?(\\d{4}|\\d{2})\(trail)") { g, _ in
