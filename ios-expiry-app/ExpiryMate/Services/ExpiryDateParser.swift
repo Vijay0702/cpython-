@@ -6,6 +6,9 @@ import Foundation
 /// month-name dates (12 JAN 2027, JAN 2027, JAN 12, 2027). When several dates
 /// are printed, one that follows "EXP", "BEST BEFORE" or "USE BY" wins, one
 /// that follows "MFG" or "PKD" loses, and otherwise the latest date wins.
+///
+/// Also handles a shelf life instead of a date ("Use before 36 months from
+/// manufacture"): the expiry is then calculated from the manufacture date.
 enum ExpiryDateParser {
 
     static func parse(
@@ -14,9 +17,32 @@ enum ExpiryDateParser {
         calendar: Calendar = .current,
         dayFirst: Bool = ExpiryDateParser.localeIsDayFirst
     ) -> Date? {
-        let upper = text.uppercased()
+        var upper = text.uppercased()
         let thisYear = calendar.component(.year, from: now)
-        var candidates: [(date: Date, score: Int, range: NSRange, hasDay: Bool)] = []
+
+        // "Use before 36 months from manufacture": the printed date is then the
+        // manufacture date. The phrase is blanked out so its words and numbers
+        // are not mistaken for an expiry label or a date.
+        var shelfLife: (amount: Int, unit: Calendar.Component)?
+        if let match = shelfLifeRegex.firstMatch(in: upper, range: NSRange(upper.startIndex..., in: upper)),
+           let amountRange = Range(match.range(at: 1), in: upper),
+           let unitRange = Range(match.range(at: 2), in: upper),
+           let amount = Int(upper[amountRange]) {
+            switch String(upper[unitRange]) {
+            case "DAY": shelfLife = (amount, .day)
+            case "WEEK": shelfLife = (amount * 7, .day)
+            case "MONTH": shelfLife = (amount, .month)
+            default: shelfLife = (amount, .year)
+            }
+            upper = (upper as NSString).replacingCharacters(
+                in: match.range,
+                with: String(repeating: " ", count: match.range.length)
+            )
+        }
+        let oldestYear = thisYear - (shelfLife == nil ? 2 : 10)
+
+        // `start` differs from `date` only for month-only dates: first versus last day of the month.
+        var candidates: [(date: Date, start: Date, score: Int, range: NSRange, hasDay: Bool)] = []
 
         for pattern in patterns {
             let range = NSRange(upper.startIndex..., in: upper)
@@ -32,11 +58,12 @@ enum ExpiryDateParser {
                 guard
                     let parts = pattern.build(groups, dayFirst),
                     let date = makeDate(parts, calendar: calendar),
-                    (thisYear - 2...thisYear + 15).contains(parts.year)
+                    let start = calendar.date(from: DateComponents(year: parts.year, month: parts.month, day: parts.day ?? 1)),
+                    (oldestYear...thisYear + 15).contains(parts.year)
                 else { continue }
 
                 let context = preceding(upper, match.range, length: 24)
-                candidates.append((date, score(for: context), match.range, parts.day != nil))
+                candidates.append((date, start, score(for: context), match.range, parts.day != nil))
             }
         }
 
@@ -47,10 +74,29 @@ enum ExpiryDateParser {
             !candidate.hasDay && fullDates.contains { NSIntersectionRange($0.range, candidate.range).length > 0 }
         }
 
-        return candidates.max { a, b in
+        let best = candidates.max { a, b in
             a.score != b.score ? a.score < b.score : a.date < b.date
-        }?.date
+        }
+
+        // An explicitly labelled expiry date beats a calculated one.
+        if let shelfLife, (best?.score ?? 0) < 1 {
+            let made = candidates
+                .filter { $0.start <= now }
+                .max { a, b in a.score != b.score ? a.score > b.score : a.start < b.start }
+            if let made,
+               let end = calendar.date(byAdding: shelfLife.unit, value: shelfLife.amount, to: made.start),
+               // "Before" 36 months: the last good day is the day before.
+               let lastGoodDay = calendar.date(byAdding: .day, value: -1, to: end) {
+                return lastGoodDay
+            }
+        }
+        return best?.date
     }
+
+    // The pattern is a compile-time constant, so a failure is a programmer error.
+    private static let shelfLifeRegex = try! NSRegularExpression(
+        pattern: "(?:(?:BEST|USE|CONSUME)\\s+)?(?:BEFORE|WITHIN)\\s*:?\\s*(\\d{1,3})\\s*(DAY|WEEK|MONTH|YEAR)S?"
+    )
 
     /// True when the user's region writes the day before the month.
     static var localeIsDayFirst: Bool {

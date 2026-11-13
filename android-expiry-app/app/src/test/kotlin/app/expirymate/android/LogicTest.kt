@@ -28,6 +28,19 @@ class ExpiryDateParserTest {
     )
     @Test fun spacedFullDateIsNotReadAsMonthOnly() = assertEquals(LocalDate.of(2027, 1, 12), parse("12 01 2027"))
     @Test fun monthNameDayYearIsNotReadAsMonthOnly() = assertEquals(LocalDate.of(2027, 1, 11), parse("JAN 11 2027"))
+    @Test fun shelfLifeFromManufactureMonth() = assertEquals(
+        LocalDate.of(2028, 1, 31),
+        parse("Regd. 7/2021. (K) Marico Ltd\nMfd.:\nBatch No.:\n02/2025\nGG480,1B\nUse Before 36 months\nfrom the date of manufacturing."),
+    )
+    @Test fun shelfLifeFromFullManufactureDate() = assertEquals(
+        LocalDate.of(2027, 3, 14),
+        parse("PKD 15/09/2026 Best before 6 months from packaging"),
+    )
+    @Test fun labelledExpiryBeatsShelfLife() = assertEquals(
+        LocalDate.of(2027, 5, 31),
+        parse("MFG 06/2026 EXP 05/2027 best before 12 months from manufacture"),
+    )
+    @Test fun shelfLifeWithoutManufactureDate() = assertNull(parse("Use before 36 months from the date of manufacturing"))
     @Test fun noDate() = assertNull(parse("Semi skimmed milk 2 litres"))
 }
 

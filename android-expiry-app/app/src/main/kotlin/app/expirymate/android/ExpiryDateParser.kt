@@ -12,6 +12,9 @@ import java.util.Locale
  * month-name dates (12 JAN 2027, JAN 2027, JAN 12, 2027). When several dates
  * are printed, one that follows "EXP", "BEST BEFORE" or "USE BY" wins, one
  * that follows "MFG" or "PKD" loses, and otherwise the latest date wins.
+ *
+ * Also handles a shelf life instead of a date ("Use before 36 months from
+ * manufacture"): the expiry is then calculated from the manufacture date.
  */
 object ExpiryDateParser {
 
@@ -20,30 +23,67 @@ object ExpiryDateParser {
         today: LocalDate = LocalDate.now(),
         dayFirst: Boolean = localeIsDayFirst(),
     ): LocalDate? {
-        val upper = text.uppercase(Locale.ROOT)
-        val candidates = mutableListOf<Candidate>()
+        val raw = text.uppercase(Locale.ROOT)
 
+        // "Use before 36 months from manufacture": the printed date is then the
+        // manufacture date. The phrase is blanked out so its words and numbers
+        // are not mistaken for an expiry label or a date.
+        val shelfLife = shelfLifeRegex.find(raw)
+        val upper = if (shelfLife == null) raw else raw.replaceRange(shelfLife.range, " ".repeat(shelfLife.value.length))
+        val oldestYear = today.year - if (shelfLife == null) 2 else 10
+
+        val candidates = mutableListOf<Candidate>()
         for (pattern in patterns) {
             for (match in pattern.regex.findAll(upper)) {
                 val parts = pattern.build(match.groupValues.drop(1), dayFirst) ?: continue
-                if (parts.year !in (today.year - 2)..(today.year + 15)) continue
+                if (parts.year !in oldestYear..(today.year + 15)) continue
                 val date = makeDate(parts) ?: continue
+                val start = LocalDate.of(parts.year, parts.month, parts.day ?: 1)
 
                 val context = upper.substring(maxOf(0, match.range.first - 24), match.range.first)
-                candidates += Candidate(date, score(context), match.range, parts.day != null)
+                candidates += Candidate(date, start, score(context), match.range, parts.day != null)
             }
         }
 
         // "12 01 2027" also contains "01 2027". Where a month-only reading overlaps
         // a full date, the full date is the right one.
         val fullDates = candidates.filter { it.hasDay }
-        return candidates
-            .filter { c -> c.hasDay || fullDates.none { it.range.first <= c.range.last && c.range.first <= it.range.last } }
-            .maxWithOrNull(compareBy<Candidate> { it.score }.thenBy { it.date })
-            ?.date
+        val remaining = candidates.filter { c ->
+            c.hasDay || fullDates.none { it.range.first <= c.range.last && c.range.first <= it.range.last }
+        }
+        val best = remaining.maxWithOrNull(compareBy<Candidate> { it.score }.thenBy { it.date })
+
+        // An explicitly labelled expiry date beats a calculated one.
+        if (shelfLife != null && (best == null || best.score < 1)) {
+            val made = remaining
+                .filter { !it.start.isAfter(today) }
+                .maxWithOrNull(compareBy<Candidate> { -it.score }.thenBy { it.start })
+            if (made != null) {
+                val amount = shelfLife.groupValues[1].toLong()
+                val end = when (shelfLife.groupValues[2]) {
+                    "DAY" -> made.start.plusDays(amount)
+                    "WEEK" -> made.start.plusWeeks(amount)
+                    "MONTH" -> made.start.plusMonths(amount)
+                    else -> made.start.plusYears(amount)
+                }
+                // "Before" 36 months: the last good day is the day before.
+                return end.minusDays(1)
+            }
+        }
+        return best?.date
     }
 
-    private class Candidate(val date: LocalDate, val score: Int, val range: IntRange, val hasDay: Boolean)
+    private val shelfLifeRegex =
+        Regex("(?:(?:BEST|USE|CONSUME)\\s+)?(?:BEFORE|WITHIN)\\s*:?\\s*(\\d{1,3})\\s*(DAY|WEEK|MONTH|YEAR)S?")
+
+    /** [start] differs from [date] only for month-only dates: first versus last day of the month. */
+    private class Candidate(
+        val date: LocalDate,
+        val start: LocalDate,
+        val score: Int,
+        val range: IntRange,
+        val hasDay: Boolean,
+    )
 
     /** True when the user's region writes the day before the month. */
     fun localeIsDayFirst(): Boolean {
