@@ -15,6 +15,17 @@ enum Torch {
     }
 }
 
+/// Lets the screen that shows a scanner ask it for a full-resolution still photo.
+@MainActor
+final class ScannerHandle {
+    fileprivate weak var scanner: DataScannerViewController?
+
+    func capturePhoto() async -> UIImage? {
+        guard let scanner else { return nil }
+        return try? await scanner.capturePhoto()
+    }
+}
+
 /// Live camera scanner for either barcodes or printed text.
 struct ScannerView: UIViewControllerRepresentable {
     enum Mode {
@@ -23,6 +34,7 @@ struct ScannerView: UIViewControllerRepresentable {
     }
 
     let mode: Mode
+    var handle: ScannerHandle?
     /// Called with the barcode digits (barcode mode).
     var onBarcode: (String) -> Void = { _ in }
     /// Called with every piece of text currently in view (text mode).
@@ -48,6 +60,7 @@ struct ScannerView: UIViewControllerRepresentable {
             isHighlightingEnabled: true
         )
         scanner.delegate = context.coordinator
+        handle?.scanner = scanner
         return scanner
     }
 

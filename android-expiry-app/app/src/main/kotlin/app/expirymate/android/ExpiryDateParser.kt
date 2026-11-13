@@ -3,6 +3,8 @@ package app.expirymate.android
 import android.text.format.DateFormat
 import java.time.LocalDate
 import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.Locale
 
 /**
@@ -16,13 +18,22 @@ import java.util.Locale
  * Also handles a shelf life instead of a date ("Use before 36 months from
  * manufacture"): the expiry is then calculated from the manufacture date.
  */
+/** [note] explains a calculated date, for example "36 months from 1 Feb 2025". */
+data class ParsedExpiry(val date: LocalDate, val note: String? = null)
+
 object ExpiryDateParser {
 
     fun parse(
         text: String,
         today: LocalDate = LocalDate.now(),
         dayFirst: Boolean = localeIsDayFirst(),
-    ): LocalDate? {
+    ): LocalDate? = parseDetailed(text, today, dayFirst)?.date
+
+    fun parseDetailed(
+        text: String,
+        today: LocalDate = LocalDate.now(),
+        dayFirst: Boolean = localeIsDayFirst(),
+    ): ParsedExpiry? {
         val raw = text.uppercase(Locale.ROOT)
 
         // "Use before 36 months from manufacture": the printed date is then the
@@ -66,11 +77,13 @@ object ExpiryDateParser {
                     "MONTH" -> made.start.plusMonths(amount)
                     else -> made.start.plusYears(amount)
                 }
+                val unit = shelfLife.groupValues[2].lowercase(Locale.ROOT) + if (amount == 1L) "" else "s"
+                val madeOn = made.start.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
                 // "Before" 36 months: the last good day is the day before.
-                return end.minusDays(1)
+                return ParsedExpiry(end.minusDays(1), "$amount $unit from $madeOn")
             }
         }
-        return best?.date
+        return best?.let { ParsedExpiry(it.date) }
     }
 
     private val shelfLifeRegex =
@@ -128,7 +141,7 @@ object ExpiryDateParser {
             Parts(fullYear(g[2].toInt()), if (aIsDay) b else a, if (aIsDay) a else b)
         },
         // 01/2027, 01-27 (no day: valid to the end of the month)
-        Pattern("(?<![0-9A-Z./-])(\\d{1,2})[./-](\\d{4}|\\d{2})(?![0-9./-])") { g, _ ->
+        Pattern("(?<![0-9A-Z./-])(\\d{1,2})[./-](\\d{4}|\\d{2})(?![0-9/-])(?!\\.[0-9])") { g, _ ->
             Parts(fullYear(g[1].toInt()), g[0].toInt(), null)
         },
         // 11 2027 (month and four-digit year separated only by a space)

@@ -125,7 +125,7 @@ object Reminders {
     }
 }
 
-/** Runs when a reminder alarm fires, and after the phone restarts. */
+/** Runs when a reminder alarm fires, and when the next alarm needs re-arming (see the manifest). */
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         ItemStore.load(context)

@@ -24,12 +24,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Fires at each reminder time, and re-arms the next one after a restart. -->
+        <!-- Fires at each reminder time, and re-arms the next one after a restart,
+             an app update, or a change to the clock or time zone. -->
         <receiver
             android:name=".ReminderReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
 

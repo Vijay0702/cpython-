@@ -20,7 +20,10 @@ struct AddItemView: View {
     @State private var barcode: String?
     @State private var name = ""
     @State private var expiryDate = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
-    @State private var detectedDate: Date?
+    @State private var detected: ParsedExpiry?
+    @State private var scannerHandle = ScannerHandle()
+    @State private var isEnhancing = false
+    @State private var enhanceFailed = false
     @State private var isLookingUp = false
     @State private var torchOn = false
 
@@ -94,7 +97,10 @@ struct AddItemView: View {
         barcode = code
         isLookingUp = true
         Task {
-            if let found = await ProductLookup.name(forBarcode: code) {
+            // A name the user gave this product before beats the database's.
+            if let remembered = rememberedName(for: code) {
+                name = remembered
+            } else if let found = await ProductLookup.name(forBarcode: code) {
                 name = found
             }
             isLookingUp = false
@@ -102,6 +108,12 @@ struct AddItemView: View {
                 step = .date
             }
         }
+    }
+
+    private func rememberedName(for code: String) -> String? {
+        let all = (try? modelContext.fetch(FetchDescriptor<GroceryItem>())) ?? []
+        let previous = all.filter { $0.barcode == code }.max { $0.addedAt < $1.addedAt }
+        return previous?.name
     }
 
     private var torchButton: some View {
@@ -121,7 +133,7 @@ struct AddItemView: View {
     // MARK: - Step 2: expiry date
 
     private var dateStep: some View {
-        ScannerView(mode: .text, onText: handleText)
+        ScannerView(mode: .text, handle: scannerHandle, onText: handleText)
             .ignoresSafeArea(edges: .bottom)
             .overlay(alignment: .topTrailing) { torchButton }
             .overlay(alignment: .bottom) {
@@ -129,15 +141,26 @@ struct AddItemView: View {
                     if !name.isEmpty {
                         Text(name).font(.headline)
                     }
-                    if let detectedDate {
-                        Text("Found: \(detectedDate.formatted(date: .long, time: .omitted))")
+                    if let detected {
+                        Text("Found: \(detected.date.formatted(date: .long, time: .omitted))")
+                        if let note = detected.note {
+                            Text("Calculated: \(note)")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                         Button("Use this date") {
-                            expiryDate = detectedDate
+                            expiryDate = detected.date
                             step = .confirm
                         }
                         .buttonStyle(.borderedProminent)
+                    } else if isEnhancing {
+                        ProgressView("Reading the photo…")
                     } else {
-                        Text("Point the camera at the printed expiry date")
+                        Text(enhanceFailed
+                             ? "No date found in the photo. Try the light at an angle, or enter the date manually."
+                             : "Point the camera at the printed expiry date")
+                        Button("Dotted or faint print? Capture", action: enhancedCapture)
+                            .buttonStyle(.bordered)
                     }
                     Button("Enter date manually") { step = .confirm }
                         .buttonStyle(.bordered)
@@ -147,8 +170,31 @@ struct AddItemView: View {
     }
 
     private func handleText(_ texts: [String]) {
-        if let date = ExpiryDateParser.parse(texts.joined(separator: "\n")), date != detectedDate {
-            detectedDate = date
+        if let parsed = ExpiryDateParser.parseDetailed(texts.joined(separator: "\n")), parsed != detected {
+            detected = parsed
+        }
+    }
+
+    /// Takes a still photo and reads it several ways; see `EnhancedTextReader`.
+    private func enhancedCapture() {
+        isEnhancing = true
+        enhanceFailed = false
+        Task {
+            var found: ParsedExpiry?
+            if let photo = await scannerHandle.capturePhoto() {
+                for text in await EnhancedTextReader.readVariants(of: photo) {
+                    if let parsed = ExpiryDateParser.parseDetailed(text) {
+                        found = parsed
+                        break
+                    }
+                }
+            }
+            isEnhancing = false
+            if let found {
+                detected = found
+            } else {
+                enhanceFailed = true
+            }
         }
     }
 
@@ -177,7 +223,8 @@ struct AddItemView: View {
                 Section {
                     Button("Scan again") {
                         barcode = nil
-                        detectedDate = nil
+                        detected = nil
+                        enhanceFailed = false
                         step = .barcode
                     }
                 }

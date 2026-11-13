@@ -41,6 +41,14 @@ class ExpiryDateParserTest {
         parse("MFG 06/2026 EXP 05/2027 best before 12 months from manufacture"),
     )
     @Test fun shelfLifeWithoutManufactureDate() = assertNull(parse("Use before 36 months from the date of manufacturing"))
+    @Test fun monthYearFollowedByFullStop() = assertEquals(LocalDate.of(2027, 1, 31), parse("EXP 01/2027."))
+    @Test fun dottedFullDateIsNotReadAsMonthOnly() = assertEquals(LocalDate.of(2027, 1, 12), parse("12.01.2027"))
+    @Test fun calculatedDateCarriesAnExplanation() {
+        val parsed = ExpiryDateParser.parseDetailed("MFD 02/2025 use before 36 months", today, true)
+        assertEquals(LocalDate.of(2028, 1, 31), parsed?.date)
+        assertEquals(true, parsed?.note?.startsWith("36 months from "))
+    }
+    @Test fun readDateHasNoExplanation() = assertNull(ExpiryDateParser.parseDetailed("EXP 12/01/2027", today, true)?.note)
     @Test fun noDate() = assertNull(parse("Semi skimmed milk 2 litres"))
 }
 

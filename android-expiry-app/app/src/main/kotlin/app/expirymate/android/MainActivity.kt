@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,6 +64,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -94,7 +100,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { LIST, ADD, SETTINGS }
+private enum class Screen { LIST, ADD, EDIT, SETTINGS }
 
 private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
 private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
@@ -103,10 +109,19 @@ private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedTime(Fo
 private fun ExpiryMateApp() {
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
         var screen by rememberSaveable { mutableStateOf(Screen.LIST) }
+        var editingId by rememberSaveable { mutableStateOf<String?>(null) }
         BackHandler(enabled = screen != Screen.LIST) { screen = Screen.LIST }
         when (screen) {
-            Screen.LIST -> ListScreen(onAdd = { screen = Screen.ADD }, onSettings = { screen = Screen.SETTINGS })
+            Screen.LIST -> ListScreen(
+                onAdd = { screen = Screen.ADD },
+                onSettings = { screen = Screen.SETTINGS },
+                onEdit = { item ->
+                    editingId = item.id
+                    screen = Screen.EDIT
+                },
+            )
             Screen.ADD -> AddScreen(onDone = { screen = Screen.LIST })
+            Screen.EDIT -> EditScreen(itemId = editingId, onDone = { screen = Screen.LIST })
             Screen.SETTINGS -> SettingsScreen(onDone = { screen = Screen.LIST })
         }
     }
@@ -115,8 +130,10 @@ private fun ExpiryMateApp() {
 // region List
 
 @Composable
-private fun ListScreen(onAdd: () -> Unit, onSettings: () -> Unit) {
+private fun ListScreen(onAdd: () -> Unit, onSettings: () -> Unit, onEdit: (Item) -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     val all by ItemStore.items.collectAsState()
     val today = LocalDate.now()
     val items = all.filter { it.isActive }.sortedBy { it.expiry }
@@ -128,10 +145,24 @@ private fun ListScreen(onAdd: () -> Unit, onSettings: () -> Unit) {
         }
     }
 
-    fun resolve(item: Item, status: String) {
+    fun setStatus(item: Item, status: String) {
         ItemStore.update(context) { list -> list.map { if (it.id == item.id) it.copy(status = status) else it } }
         Reminders.cancelItem(context, item.id)
         Reminders.reschedule(context)
+    }
+
+    fun resolve(item: Item, status: String) {
+        setStatus(item, status)
+        scope.launch {
+            // Replace any earlier message so Undo always refers to the latest action.
+            snackbar.currentSnackbarData?.dismiss()
+            val result = snackbar.showSnackbar(
+                message = "${item.name} marked as ${if (status == Item.USED) "used" else "thrown away"}",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) setStatus(item, Item.ACTIVE)
+        }
     }
 
     Scaffold(
@@ -145,6 +176,7 @@ private fun ListScreen(onAdd: () -> Unit, onSettings: () -> Unit) {
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onAdd,
@@ -169,9 +201,9 @@ private fun ListScreen(onAdd: () -> Unit, onSettings: () -> Unit) {
                     bottom = padding.calculateBottomPadding() + 88.dp,
                 ),
             ) {
-                section("Expired", items.filter { it.daysLeft(today) < 0 }, today, ::resolve)
-                section("Expiring soon", items.filter { it.daysLeft(today) in 0..3 }, today, ::resolve)
-                section("Fresh", items.filter { it.daysLeft(today) > 3 }, today, ::resolve)
+                section("Expired", items.filter { it.daysLeft(today) < 0 }, today, onEdit, ::resolve)
+                section("Expiring soon", items.filter { it.daysLeft(today) in 0..3 }, today, onEdit, ::resolve)
+                section("Fresh", items.filter { it.daysLeft(today) > 3 }, today, onEdit, ::resolve)
             }
         }
     }
@@ -181,6 +213,7 @@ private fun LazyListScope.section(
     title: String,
     sectionItems: List<Item>,
     today: LocalDate,
+    onEdit: (Item) -> Unit,
     onResolve: (Item, String) -> Unit,
 ) {
     if (sectionItems.isEmpty()) return
@@ -193,13 +226,13 @@ private fun LazyListScope.section(
         )
     }
     items(sectionItems, key = { it.id }) { item ->
-        ItemRow(item, today, onResolve)
+        ItemRow(item, today, onEdit, onResolve)
         HorizontalDivider()
     }
 }
 
 @Composable
-private fun ItemRow(item: Item, today: LocalDate, onResolve: (Item, String) -> Unit) {
+private fun ItemRow(item: Item, today: LocalDate, onEdit: (Item) -> Unit, onResolve: (Item, String) -> Unit) {
     val days = item.daysLeft(today)
     val dot = when {
         days < 0 -> Color(0xFFE5484D)
@@ -207,7 +240,10 @@ private fun ItemRow(item: Item, today: LocalDate, onResolve: (Item, String) -> U
         else -> Color(0xFF30A46C)
     }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClickLabel = "Edit ${item.name}") { onEdit(item) }
+            .padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(12.dp).clip(CircleShape).background(dot))
@@ -249,7 +285,10 @@ private fun AddScreen(onDone: () -> Unit) {
     var barcode by remember { mutableStateOf<String?>(null) }
     var name by remember { mutableStateOf("") }
     var expiry by remember { mutableStateOf(LocalDate.now().plusDays(7)) }
-    var detected by remember { mutableStateOf<LocalDate?>(null) }
+    var detected by remember { mutableStateOf<ParsedExpiry?>(null) }
+    var captureRequest by remember { mutableIntStateOf(0) }
+    var enhancing by remember { mutableStateOf(false) }
+    var enhanceFailed by remember { mutableStateOf(false) }
     var lookingUp by remember { mutableStateOf(false) }
     var torchOn by remember { mutableStateOf(false) }
 
@@ -302,7 +341,9 @@ private fun AddScreen(onDone: () -> Unit) {
                             barcode = code
                             lookingUp = true
                             scope.launch {
-                                ProductLookup.name(code)?.let { name = it }
+                                // A name the user gave this product before beats the database's.
+                                val remembered = ItemStore.items.value.lastOrNull { it.barcode == code }?.name
+                                (remembered ?: ProductLookup.name(code))?.let { name = it }
                                 lookingUp = false
                                 if (step == AddStep.BARCODE) step = AddStep.DATE
                             }
@@ -323,8 +364,14 @@ private fun AddScreen(onDone: () -> Unit) {
                     torchOn = torchOn,
                     onToggleTorch = { torchOn = !torchOn },
                     onText = { text ->
-                        val date = ExpiryDateParser.parse(text)
-                        if (date != null && date != detected) detected = date
+                        val parsed = ExpiryDateParser.parseDetailed(text)
+                        if (parsed != null && parsed != detected) detected = parsed
+                    },
+                    captureRequest = captureRequest,
+                    onCapturedTexts = { texts ->
+                        val parsed = texts.firstNotNullOfOrNull { ExpiryDateParser.parseDetailed(it) }
+                        enhancing = false
+                        if (parsed != null) detected = parsed else enhanceFailed = true
                     },
                 ) {
                     if (name.isNotEmpty()) {
@@ -332,13 +379,35 @@ private fun AddScreen(onDone: () -> Unit) {
                     }
                     val found = detected
                     if (found != null) {
-                        Text("Found: ${found.format(dateFormat)}")
+                        Text("Found: ${found.date.format(dateFormat)}")
+                        found.note?.let {
+                            Text(
+                                "Calculated: $it",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Button(onClick = {
-                            expiry = found
+                            expiry = found.date
                             step = AddStep.CONFIRM
                         }) { Text("Use this date") }
+                    } else if (enhancing) {
+                        CircularProgressIndicator()
+                        Text("Reading the picture…")
                     } else {
-                        Text("Point the camera at the printed expiry date. Pinch to zoom.", textAlign = TextAlign.Center)
+                        Text(
+                            if (enhanceFailed) {
+                                "No date found in the picture. Try the light at an angle, or enter the date manually."
+                            } else {
+                                "Point the camera at the printed expiry date. Pinch to zoom."
+                            },
+                            textAlign = TextAlign.Center,
+                        )
+                        OutlinedButton(onClick = {
+                            enhancing = true
+                            enhanceFailed = false
+                            captureRequest++
+                        }) { Text("Dotted or faint print? Capture") }
                     }
                     OutlinedButton(onClick = { step = AddStep.CONFIRM }) { Text("Enter date manually") }
                 }
@@ -353,6 +422,7 @@ private fun AddScreen(onDone: () -> Unit) {
                         {
                             barcode = null
                             detected = null
+                            enhanceFailed = false
                             torchOn = false
                             step = AddStep.BARCODE
                         }
@@ -372,10 +442,12 @@ private fun ScanStep(
     onToggleTorch: () -> Unit,
     onBarcode: (String) -> Unit = {},
     onText: (String) -> Unit = {},
+    captureRequest: Int = 0,
+    onCapturedTexts: (List<String>) -> Unit = {},
     panel: @Composable () -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
-        ScannerView(mode, torchOn, onBarcode, onText, Modifier.fillMaxSize())
+        ScannerView(mode, torchOn, onBarcode, onText, Modifier.fillMaxSize(), captureRequest, onCapturedTexts)
         FilledTonalButton(onClick = onToggleTorch, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
             Text(if (torchOn) "Light off" else "Light on")
         }
@@ -446,6 +518,54 @@ private fun ConfirmStep(
 
 // endregion
 
+// region Edit item
+
+/** Corrects the name or expiry date of a saved item. */
+@Composable
+private fun EditScreen(itemId: String?, onDone: () -> Unit) {
+    val context = LocalContext.current
+    val original = remember(itemId) { ItemStore.items.value.firstOrNull { it.id == itemId } }
+    if (original == null) {
+        LaunchedEffect(Unit) { onDone() }
+        return
+    }
+    var name by remember { mutableStateOf(original.name) }
+    var expiry by remember { mutableStateOf(original.expiry) }
+
+    fun save() {
+        ItemStore.update(context) { list ->
+            // A corrected date starts with a clean slate of reminders.
+            list.map { if (it.id == original.id) it.copy(name = name.trim(), expiry = expiry, snoozedUntil = null) else it }
+        }
+        Reminders.cancelItem(context, original.id)
+        Reminders.reschedule(context)
+        onDone()
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Edit item") },
+                navigationIcon = { TextButton(onClick = onDone) { Text("Cancel") } },
+                actions = { TextButton(onClick = ::save, enabled = name.isNotBlank()) { Text("Save") } },
+            )
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            ConfirmStep(
+                name = name,
+                onNameChange = { name = it },
+                barcode = original.barcode,
+                expiry = expiry,
+                onExpiryChange = { expiry = it },
+                onScanAgain = null,
+            )
+        }
+    }
+}
+
+// endregion
+
 // region Settings
 
 @Composable
@@ -498,7 +618,9 @@ private fun SettingsScreen(onDone: () -> Unit) {
             HorizontalDivider()
 
             Text(
-                "Product names come from Open Food Facts (openfoodfacts.org), available under the Open Database Licence.",
+                "Product names come from the volunteer-run Open Food Facts, Open Beauty Facts and Open Products " +
+                    "Facts databases (openfoodfacts.org), available under the Open Database Licence. " +
+                    "Only the barcode number is sent to them.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -45,6 +45,14 @@ struct SettingsView: View {
                 } footer: {
                     Text("A reminder every hour between these times, until you mark the item as used or thrown away.")
                 }
+
+                Section {
+                    Link("Open Food Facts", destination: URL(string: "https://world.openfoodfacts.org")!)
+                } header: {
+                    Text("Product names")
+                } footer: {
+                    Text("Names come from the volunteer-run Open Food Facts, Open Beauty Facts and Open Products Facts databases, available under the Open Database Licence. Only the barcode number is sent to them.")
+                }
             }
             .navigationTitle("Reminders")
             .navigationBarTitleDisplayMode(.inline)

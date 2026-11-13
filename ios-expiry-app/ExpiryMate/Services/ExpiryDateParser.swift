@@ -9,6 +9,12 @@ import Foundation
 ///
 /// Also handles a shelf life instead of a date ("Use before 36 months from
 /// manufacture"): the expiry is then calculated from the manufacture date.
+struct ParsedExpiry: Equatable {
+    let date: Date
+    /// Explains a calculated date, for example "36 months from 1 Feb 2025".
+    var note: String?
+}
+
 enum ExpiryDateParser {
 
     static func parse(
@@ -17,22 +23,33 @@ enum ExpiryDateParser {
         calendar: Calendar = .current,
         dayFirst: Bool = ExpiryDateParser.localeIsDayFirst
     ) -> Date? {
+        parseDetailed(text, now: now, calendar: calendar, dayFirst: dayFirst)?.date
+    }
+
+    static func parseDetailed(
+        _ text: String,
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        dayFirst: Bool = ExpiryDateParser.localeIsDayFirst
+    ) -> ParsedExpiry? {
         var upper = text.uppercased()
         let thisYear = calendar.component(.year, from: now)
 
         // "Use before 36 months from manufacture": the printed date is then the
         // manufacture date. The phrase is blanked out so its words and numbers
         // are not mistaken for an expiry label or a date.
-        var shelfLife: (amount: Int, unit: Calendar.Component)?
+        var shelfLife: (amount: Int, unit: Calendar.Component, text: String)?
         if let match = shelfLifeRegex.firstMatch(in: upper, range: NSRange(upper.startIndex..., in: upper)),
            let amountRange = Range(match.range(at: 1), in: upper),
            let unitRange = Range(match.range(at: 2), in: upper),
            let amount = Int(upper[amountRange]) {
-            switch String(upper[unitRange]) {
-            case "DAY": shelfLife = (amount, .day)
-            case "WEEK": shelfLife = (amount * 7, .day)
-            case "MONTH": shelfLife = (amount, .month)
-            default: shelfLife = (amount, .year)
+            let unitName = String(upper[unitRange])
+            let text = "\(amount) \(unitName.lowercased())\(amount == 1 ? "" : "s")"
+            switch unitName {
+            case "DAY": shelfLife = (amount, .day, text)
+            case "WEEK": shelfLife = (amount * 7, .day, text)
+            case "MONTH": shelfLife = (amount, .month, text)
+            default: shelfLife = (amount, .year, text)
             }
             upper = (upper as NSString).replacingCharacters(
                 in: match.range,
@@ -87,10 +104,11 @@ enum ExpiryDateParser {
                let end = calendar.date(byAdding: shelfLife.unit, value: shelfLife.amount, to: made.start),
                // "Before" 36 months: the last good day is the day before.
                let lastGoodDay = calendar.date(byAdding: .day, value: -1, to: end) {
-                return lastGoodDay
+                let madeOn = made.start.formatted(date: .abbreviated, time: .omitted)
+                return ParsedExpiry(date: lastGoodDay, note: "\(shelfLife.text) from \(madeOn)")
             }
         }
-        return best?.date
+        return best.map { ParsedExpiry(date: $0.date, note: nil) }
     }
 
     // The pattern is a compile-time constant, so a failure is a programmer error.
@@ -151,7 +169,7 @@ enum ExpiryDateParser {
             return Parts(year: fullYear(y), month: month, day: day)
         },
         // 01/2027, 01-27 (no day: valid to the end of the month)
-        Pattern("(?<![0-9A-Z./-])(\\d{1,2})[./-](\\d{4}|\\d{2})(?![0-9./-])") { g, _ in
+        Pattern("(?<![0-9A-Z./-])(\\d{1,2})[./-](\\d{4}|\\d{2})(?![0-9/-])(?!\\.[0-9])") { g, _ in
             guard let m = Int(g[0]), let y = Int(g[1]) else { return nil }
             return Parts(year: fullYear(y), month: m, day: nil)
         },

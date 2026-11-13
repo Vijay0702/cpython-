@@ -10,6 +10,10 @@ struct ItemListView: View {
     @State private var isAdding = false
     @State private var isShowingSettings = false
     @State private var notificationsDenied = false
+    @State private var editingItem: GroceryItem?
+    /// The item most recently marked used or thrown away, while Undo is on offer.
+    @State private var lastResolved: GroceryItem?
+    @State private var undoDismissal: Task<Void, Never>?
 
     private var items: [GroceryItem] { allItems.filter(\.isActive) }
     private var expired: [GroceryItem] { items.filter { $0.daysLeft() < 0 } }
@@ -56,6 +60,8 @@ struct ItemListView: View {
                 }
             }
             .sheet(isPresented: $isAdding) { AddItemView() }
+            .sheet(item: $editingItem) { EditItemView(item: $0) }
+            .safeAreaInset(edge: .bottom) { undoBar }
             .sheet(isPresented: $isShowingSettings, onDismiss: refreshReminders) { SettingsView() }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -70,7 +76,9 @@ struct ItemListView: View {
         if !sectionItems.isEmpty {
             Section(title) {
                 ForEach(sectionItems) { item in
-                    ItemRow(item: item)
+                    Button { editingItem = item } label: { ItemRow(item: item) }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Edits the name or expiry date")
                         .swipeActions(edge: .trailing) {
                             Button("Thrown away") { resolve(item, as: .discarded) }
                                 .tint(.red)
@@ -88,6 +96,44 @@ struct ItemListView: View {
         try? modelContext.save()
         Task { await ReminderScheduler.shared.clearDelivered(for: itemID) }
         refreshReminders()
+        offerUndo(for: item)
+    }
+
+    private func offerUndo(for item: GroceryItem) {
+        undoDismissal?.cancel()
+        withAnimation { lastResolved = item }
+        undoDismissal = Task {
+            try? await Task.sleep(for: .seconds(6))
+            if !Task.isCancelled {
+                withAnimation { lastResolved = nil }
+            }
+        }
+    }
+
+    private func undo(_ item: GroceryItem) {
+        undoDismissal?.cancel()
+        item.status = .active
+        try? modelContext.save()
+        withAnimation { lastResolved = nil }
+        refreshReminders()
+    }
+
+    @ViewBuilder
+    private var undoBar: some View {
+        if let item = lastResolved {
+            HStack {
+                Text("\(item.name) marked as \(item.status == .used ? "used" : "thrown away")")
+                    .lineLimit(1)
+                Spacer()
+                Button("Undo") { undo(item) }
+                    .fontWeight(.semibold)
+            }
+            .padding()
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     private func refreshReminders() {
