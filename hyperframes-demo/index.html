@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --ground: #0f1724;
+        --ink: #f4f1e8;
+        --blue: #3776ab;
+        --yellow: #ffd43b;
+        --muted: #8a94a6;
+        --font-display: "Helvetica Neue", Arial, sans-serif;
+        --font-mono: "DejaVu Sans Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--ground);
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        font-family: var(--font-display);
+        color: var(--ink);
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 36px;
+      }
+      .bar {
+        position: absolute;
+        left: 0;
+        height: 18px;
+        width: 100%;
+        transform-origin: left center;
+      }
+      #bar-blue { top: 0; background: var(--blue); }
+      #bar-yellow { bottom: 0; background: var(--yellow); }
+      #kicker {
+        font-family: var(--font-mono);
+        font-size: 34px;
+        color: var(--yellow);
+        letter-spacing: 0.08em;
+      }
+      #title {
+        font-size: 168px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+      #title .py { color: var(--yellow); }
+      #sub {
+        font-size: 44px;
+        color: var(--muted);
+      }
+      #code {
+        font-family: var(--font-mono);
+        font-size: 64px;
+        background: #0a101a;
+        border: 2px solid #24324a;
+        border-radius: 20px;
+        padding: 48px 72px;
+        line-height: 1.5;
+      }
+      #code .prompt { color: var(--blue); }
+      #code .str { color: var(--yellow); }
+      #code .out { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="8"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div id="bar-blue" class="bar clip" data-start="0" data-duration="8" data-track-index="0"></div>
+      <div id="bar-yellow" class="bar clip" data-start="0" data-duration="8" data-track-index="1"></div>
+
+      <div id="scene-title" class="scene clip" data-start="0" data-duration="4.2" data-track-index="2">
+        <div id="kicker">vijay0702 / cpython-</div>
+        <h1 id="title">C<span class="py">Python</span></h1>
+        <div id="sub">The reference implementation of Python</div>
+      </div>
+
+      <div id="scene-code" class="scene clip" data-start="4" data-duration="4" data-track-index="3">
+        <pre id="code"><span class="prompt">&gt;&gt;&gt;</span> print(<span class="str">"Hello, HyperFrames!"</span>)
+<span class="out">Hello, HyperFrames!</span></pre>
+      </div>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.fromTo("#bar-blue", { scaleX: 0 }, { scaleX: 1, duration: 0.8, ease: "power3.out" }, 0);
+      tl.fromTo("#bar-yellow", { scaleX: 0 }, { scaleX: 1, duration: 0.8, ease: "power3.out" }, 0.15);
+
+      tl.fromTo("#kicker", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 0.4);
+      tl.fromTo("#title", { scale: 1.08 }, { scale: 1, duration: 1.2, ease: "power3.out" }, 0);
+      tl.fromTo("#sub", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "power1.out" }, 1.2);
+      tl.to("#scene-title", { opacity: 0, y: -40, duration: 0.4, ease: "power2.in" }, 3.8);
+
+      tl.fromTo("#code", { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.6, ease: "back.out(1.6)" }, 4.1);
+      tl.fromTo("#code .out", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 5.0);
+      tl.to("#scene-code", { opacity: 0, duration: 0.5, ease: "power1.in" }, 7.4);
+
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
